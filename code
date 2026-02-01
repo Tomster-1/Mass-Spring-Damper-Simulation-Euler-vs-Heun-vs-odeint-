@@ -1,0 +1,344 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+
+
+import numpy as np
+import matplotlib.pyplot as plt
+
+"""Code for the Simulation (numerical analysis) of the mechanical mass-spring-damper system from Coursework 1.
+The mass-spring damper system is subjected to an input force F2(t) (unit impulse, where t when force drops to 0 is 1s).
+F2(t) is implemented as "force".
+Hence, the mass-spring damper system reacts, we can simulate this using Eq.(1)-Eq.(2) from Coursework 1.
+We implement two numerical techniques that solve Ordinary Differential Equations (ODEs):
+a) Euler method (implemented as the function "simulate_system_euler")
+b) Runge-Kutta (Heun second order) method (implemented as the function "simulate_system_heun")
+We check the validity of these methods by simulating the system using odeint (implemented as "system")
+We expect precision of odeint>Heun>>Euler. We ensure computation of Euler/Heun are valid by comparing this to odeint.
+This is added as a plot in the appendix and the odeint code/plot code is added to the appendix.
+Note: If the code was incorrect for euler and heun methods, i.e., it is not being calculated correctly, we would observe
+a significant difference in the response curve compared to odeint. This allows us to use odeint as a tool to verify that
+our methods are producing reliable and sensible responses.
+
+
+Justification of timestep (dt), further justification throughout the document.
+
+We now vary the time step (dt) between a suitable range of 0.01-0.1s, such that the time step causes some variance in
+percentage error, while (|𝜖𝑡|%) < 1% for the Euler and Heun method. This is done to highlight the difference
+in precision between the Euler (less accurate) and Heun method and save computational cost while (|𝜖𝑡|%) < 1%.
+Hence, we iterate the timestep between 0.01-0.1s. (dt = 0.05) is chosen to highlight differences in the euler and heun
+methods, and to save on computational expense. Our methods are still accurate and display responses as expected.
+Note: As dt approaches 0, the response difference between heun and euler methods dissapears making it difficult to see
+which one is more accurate. Computational cost is saved here by not using very small timesteps (dt) i.e., <0.001, as each
+timestep is one calculation the computer must make. Hence, my timestep of 0.05 is 5x "faster" than 0.01, but still produces
+accurate and reliable results.
+
+It is important to note the larger value (0.1s) in range 0.01-0.1s for testing timestep (dt) is selected by analysing the
+Input plot (appendix), the waveform loses its square nature, and applies the force over time. This introduces error
+into our system, hence values >0.1s are considered inaccurate as the input force is incorrectly represented.
+Finally a large timestep of >0.5s is impractical as numerical methods become inaccurate where data is largely skewed.
+
+We know Heun requires less iterations to reach the same accuracy as Euler, hence by using the same timestep (dt) for both
+numerical methods, we obersve that Heun is more accurate than Euler, highlighted by a slightly larger stepsize (dt=0.05).
+Rather than (dt=0.01). To achieve the same accuracy, we modify (dt) for heun (ie., introduce (dt_heun); such that
+dt_heun>dt_euler, by a factor that ensures heun achieves the same accuracy as euler method.
+This can be observed in the percentage error plot for euler and heun, (|𝜖𝑡|%) vs time.
+
+From this, it is important to note that Euler will display larger (|𝜖𝑡|%) values. Hence, we must be certain that both methods
+converge with 1% of the steady state value. (i.e., at T=52s), euler produces (|𝜖𝑡|%)>1%, where heun does not. Hence, we increase
+the total simulation time (T=80s), to ensure all values are well below 1% of Yss and the system converges to it's steady state
+value of 0, (note: simulation never truly reaches 0, only when T->infinity; analytically calculated using the FVT in C/W 1).
+
+Justification of Total Simulation time (T), further justification throughout the document.
+
+The analytical solution of the FVT is 0. Note: We compare the analytical solution to the simulated solution (FVT = 0).
+This validates our methods as the final value where our system converges is 0 for the analytical solution and simulation.
+
+We implement (desired_steady_state_value = 0) and compare the final value of the response of euler and heun to calculate
+𝜖𝑡 and (|𝜖𝑡|%). By plotting the (|𝜖𝑡|%) over the response time (appendix), we see when (|𝜖𝑡|%) converges to within 1% of Yss.
+Which is around 52s. Using this we can vary (T) and select a suitable total simulation time (T = 85s)
+that allows all methods to converge well within 1% of the steady state (Yss), and the simulation is
+brought to a near steady state (settling within our tolerance bound of 1%) where the responses have settled very close to 0.
+(Previously mentioned, never reaches a true value of 0, as oscillations continue forever for an underdamped system).
+
+
+Output response p2 vs time for both methods is plotted, and compared with the odeint solution of the response.
+The system behaviour displays an underdamped system, as the plot(s) show oscillations that decay overtime. (Hence, 0<ζ<1).
+We can confirm the system is underdamped as the poles are complex conjugates with negative real parts.
+"If 0 < ζ < 1, then poles are complex conjugates with negative real part(s)" (TS, 2017)
+As we have the analytical solution for the system, and the s-plane plot, we notice our system cobborates with an underdamped
+system, we calculate the damping factor (zeta, ζ), to verify our system is truly underdamped. 
+Comments are added to the plot, specifically mentioning the damping factor ζ.
+"""
+
+# Simulation parameters
+dt = 0.05 # Time step (dt) 
+T = 80 # Total Simulation Time (T) 
+
+# Steady-state value for transfer function, calculated analytically via the Final Value Therom (FVT).
+desired_steady_state_value = 0
+
+
+# The force is defined using lambda expression, representing a unit impulse, but the time when force = 0 is 1 second.
+# This simulates a rectangular pulse input from t = 0 to t = 1, reliant on the precision of the timestep.
+# Note if the timestep is large (dt>0.1) the rectangular nature will become largely triangular incorrectly representing force.
+force = lambda t: np.where((t>=0) & (t<=1),1,0)
+
+
+def simulate_system_euler(dt,T):
+    '''Heun method simulation, by generating a time array from 0->T with a timestep dt, we calculate iterations as (n)'''
+    t = np.arange(0,T,dt) # Generating a time array from 0 to T with step size dt
+    n = len(t) # Number of time steps (iterations)
+    F2 = force(t)  # Calling for force over time
+    
+    # Initialising arrays for system states. Two 2nd order ODE's are expressed as 4 first order ODE's.
+    p1,dp1,p2,dp2 = np.zeros(n),np.zeros(n),np.zeros(n),np.zeros(n)
+    
+    # Loop to solve the system using eulers method
+    for i in range(n-1):
+        dp1[i+1] = dp1[i]+ dt*(-0.4*p1[i] - 0.4*dp1[i] + 0.2*p2[i] + 0.2*dp2[i]) 
+        p1[i+1] = p1[i] + dt*dp1[i]
+        dp2[i+1] = dp2[i] + dt*(p1[i] + dp1[i] - p2[i] - dp2[i] + F2[i])
+        p2[i+1] = p2[i] + dt*dp2[i]
+    # Returns time (t), system states (p1 and p2), and force F2(t)
+    return t,p1,p2,F2
+
+
+def simulate_system_heun(dt,T):
+    '''Heun method simulation, by generating a time array from 0->T with a timestep dt, we calculate iterations as (n)'''
+    t = np.arange(0,T,dt) # Generating a time array from 0->T with step size dt
+    n = len(t) # Number of time steps (iterations)
+    F2 = force(t)  # Calling for force over time
+    
+    # Initialising arrays for system states. Two 2nd order ODE's are expressed as 4 first order ODE's.
+    p1,dp1,p2,dp2 = np.zeros(n),np.zeros(n),np.zeros(n),np.zeros(n)
+    
+    # Loop to solve the system using Heuns method
+    for i in range(n-1):
+        # predictor step, using eulers method
+        dp1_predictor = dp1[i] + dt*(-0.4*p1[i] - 0.4*dp1[i] + 0.2*p2[i] + 0.2*dp2[i])
+        p1_predictor = p1[i] + dt*dp1[i]
+        dp2_predictor = dp2[i] + dt*(p1[i] + dp1[i] - p2[i] - dp2[i] + F2[i])
+        p2_predictor = p2[i] + dt*dp2[i]
+        
+        # corrector step (refines predictions from euler method using predicted values)
+        dp1_corrected = dp1[i] + dt*(-0.4*p1_predictor - 0.4*dp1_predictor + 0.2*p2_predictor + 0.2*dp2_predictor)
+        p1_corrected = p1[i] + dt*dp1_predictor
+        dp2_corrected = dp2[i] + dt*(p1_predictor + dp1_predictor - p2_predictor - dp2_predictor + F2[i])
+        p2_corrected = p2[i] + dt*dp2_predictor
+        
+        # updating system states with an average of the predictor and corrector step
+        dp1[i+1] = 0.5*(dp1_predictor + dp1_corrected)
+        p1[i+1] = 0.5*(p1_predictor + p1_corrected)
+        dp2[i+1] = 0.5*(dp2_predictor + dp2_corrected)
+        p2[i+1] = 0.5*(p2_predictor + p2_corrected)
+    # Returns time (t), system states (p1 and p2), and force F2(t)
+    return t,p1,p2,F2
+
+# Using the function outputs to simulate the mechanical spring-damper system using euler and Heun methods.
+# Note: p1 is not the output of the system and is not shown in the python code outputs. 
+t_euler, p1_euler, p2_euler, F2_euler = simulate_system_euler(dt,T) #assigning time, system states and force to euler method
+t_heun, p1_heun, p2_heun, F2_heun = simulate_system_heun(dt,T) #assigning time, system states and force to heun method
+
+# Calculate array of errors for Euler method for the output p2(t). Note: desired_steady_state_value = 0, hence +1 to avoid
+# division by zero errors. (Array of 𝜖𝑡 values across the entire response.)
+error_euler_p2 = np.abs(p2_euler - desired_steady_state_value)
+# Calculates array of percentage errors. (Array of (|𝜖𝑡|%) values across the entire response.)
+percent_error_euler_p2 = (np.abs(error_euler_p2 + 1 / (np.abs(desired_steady_state_value) + 1)) * 100) - 100
+
+# Calculate array of errors for Heun method for the output p2(t). Note: desired_steady_state_value = 0, hence +1 to avoid
+# division by zero errors. (Array of 𝜖𝑡 values across the entire response.)
+error_heun_p2 = np.abs(p2_heun - desired_steady_state_value)
+# Calculates array of percentage errors. (Array of (|𝜖𝑡|%) values across the entire response.)
+percent_error_heun_p2 = (np.abs(error_heun_p2 + 1 / (np.abs(desired_steady_state_value) + 1)) * 100) - 100
+
+# Print final errors and percentage errors (final value of the response)
+#  [-1] takes last value of the array, .6 and .4 = decimal place control
+print(f"Euler Method - p2 Final Error |𝜖𝑡| (Last value of response): {error_euler_p2[-1]:.6f}, Final Percentage Error (|𝜖𝑡|%): {percent_error_euler_p2[-1]:.3f}%")
+print(f"Heun Method - p2 Final Error |𝜖𝑡| (Last value of response): {error_heun_p2[-1]:.6f}, Final Percentage Error (|𝜖𝑡|%): {percent_error_heun_p2[-1]:.3f}%")
+
+#plots output responses p2 vs time in seconds for euler method with information of system behaviour (damping).
+# The system response shows a clear underdamped system, as described in xlabel, and the calculated damping factor (appendix)
+plt.figure(figsize=(12, 6))
+plt.plot(t_euler, p2_euler, label="p2 (Euler)", color="blue")
+plt.axhline(desired_steady_state_value, color='black', linestyle='-', label="Steady State (0)")
+plt.title("System Response p2 vs. Time")
+plt.ylabel("Displacement of Response p2 (m)")
+plt.xlabel("Time (s)\n"
+    " \n"
+    "The plot shows oscillations that decay over time. Hence, our system is underdamped (ζ < 1).\n"
+    "In other cases, the plot could show no oscillations and a slow return to zero, in this case, the system would be overdamped (ζ > 1).\n"
+    "Furthermore, the plot could return to equilibrium quickly without oscillation, in this case, the system would be critically damped (ζ = 1).")
+plt.grid()
+plt.legend()
+plt.show()
+
+#plots  output response p2 vs time in seconds for heun method with information of system behaviour (damping).
+plt.figure(figsize=(12, 6))
+plt.plot(t_heun, p2_heun, label="p2 (Heun)", color="red")
+plt.axhline(desired_steady_state_value, color='black', linestyle='-', label="Steady State (0)")
+plt.title("System Response p2 vs. Time") 
+plt.ylabel("Displacement of Response p2 (m)")
+plt.xlabel("Time (s)\n"
+    " \n"
+    "The plot shows oscillations that decay over time. Hence, our system is underdamped (ζ < 1).\n"
+    "In other cases, the plot could show no oscillations and a slow return to zero, in this case, the system would be overdamped (ζ > 1).\n"
+    "Furthermore, the plot could return to equilibrium quickly without oscillation, in this case, the system would be critically damped (ζ = 1).")
+plt.grid()
+plt.legend()
+plt.show()
+
+# Combined plot for output responses p2 vs. time for both Euler and Heun methods
+# Allows direct visual comparison between the two methods
+plt.figure(figsize=(12, 6))
+plt.plot(t_euler, p2_euler, label="p2 (Euler)", color="blue")
+plt.plot(t_heun, p2_heun, label="p2 (Heun)", color="red")
+plt.axhline(desired_steady_state_value, color='black', linestyle='-', label="Steady State (0)")
+plt.title("System Response p2 vs. Time")
+plt.ylabel("Displacement of Response p2 (m)")
+plt.xlabel("Time (s)\n"
+    " \n"
+    "The plot shows oscillations that decay over time. Hence, our system is underdamped (ζ < 1).\n"
+    "In other cases, the plot could show no oscillations and a slow return to zero, in this case, the system would be overdamped (ζ > 1).\n"
+    "Furthermore, the plot could return to equilibrium quickly without oscillation, in this case, the system would be critically damped (ζ = 1).")
+plt.grid()
+plt.legend()
+plt.show()
+          
+##APPENDIX ## APPENDIX ## APPENDIX ##APPENDIX ## APPENDIX ## APPENDIX ##APPENDIX ## APPENDIX ## APPENDIX ##APPENDIX ## APPENDIX
+# Extra code to help quantify total simulation time (T), timestep (dt) and verification of damping (under, over, critically).
+
+
+# calculation of the damping factor (ζ, zeta) to ensure our system is truly underdamped.
+# confirms visual inspection of our underdamped system is truly underdamped as ζ < 1.
+from scipy.signal import find_peaks # Importing the function to find peaks in a signal
+# Find peaks for both Euler and Heun responses
+# "find_peaks" identifies the local maximum (peak) is in a signal/response.
+# Returns values where peaks occur.
+
+peaks_euler, _ = find_peaks(p2_euler) # Find peaks in the output array of p2(t) for the euler method.
+peaks_heun, _ = find_peaks(p2_heun) # Find peaks in in the output array of p2(t) for the heun method.
+
+
+def calculate_damping_ratio(peaks,response):
+    '''Defining a function that calculates the damping ratio (zeta, ζ).
+       We compare multiple consecutive peaks throughout the response to improve accuracy of ζ.'''
+    
+    zeta_values = []  # Using an array to store damping ratios calculated from consecutive peaks.
+    
+    for i in range(len(peaks)-1):  # Create a loop to go through all consecutive pairs of peaks.
+        Amplitude_1 = response[peaks[i]] # Amplitude of the first peak
+        Amplitude_2 = response[peaks[i+1]] # Amplitude of the second peak
+        if Amplitude_2>0 and Amplitude_1>0: # Ensuring both peaks are positive, as you cannot take log of -ve.
+            delta = np.log(Amplitude_1/Amplitude_2) # Natural log of ratio of two amplitudes of peaks. (δ)
+            # Damping ratio formula: ζ = δ / √(4π^2 + δ^2), where δ = delta. (fiveable, 2024) (reference in appendix)
+            zeta = delta/np.sqrt(4*np.pi**2+delta**2) 
+            zeta_values.append(zeta) # Add  calculated values "zeta" to "zeta_values" array. Note: zeta(ζ) = damping factor.
+            
+        if zeta_values: #checks there are zeta values
+            return np.mean(zeta_values) # Return the average of all calculated damping ratios if there are valid zeta values.
+        
+        else: #if there are no valid zeta values (i.e., no consecutive peaks, the function returns None)
+            return None
+
+
+# Calculate damping ratios for Euler and Heun methods using the defined function to be used in p2 vs time response plot.
+zeta_euler = calculate_damping_ratio(peaks_euler, p2_euler)  # Calculates damping ratio for Euler response
+zeta_heun = calculate_damping_ratio(peaks_heun, p2_heun)     # Calculates damping ratio for Heun response
+
+
+# print zeta values for euler and heun. Verifies system damping state for a under, over or critically damped system.
+# We check if there are consecutive peaks, and if there are not any the function cannot calculate a valid damping factor,
+# hence, we do not print the damping factor if there are no consecutive peaks.
+
+print("APPENDIX APPENDIX APPENDIX")
+print(f" ζ (Euler) ≈ {zeta_euler:.3f}  ζ (Heun) ≈ {zeta_heun:.3f}" if zeta_euler and zeta_heun else None)
+print("These values validify visual inspection of an underdamped system, and our system is truly underdamped as zeta, (ζ) < 1.") if zeta_euler and zeta_heun else None
+
+
+# Checking euler and heun solutions/equations are valid by comparison with odeint.
+# Assuming correct equations and solutions are inputted, and computed with odeint,
+# We can compare the euler and heun method to the odeint solution to validate these methods
+# have also had the correct equations inputted and they correctly compute the mass-spring damper output response.
+
+from scipy.integrate import odeint #imports the numerical solution odeint 
+
+# Define the system of ODEs so odeint can calculate it
+def system(y,t):
+    p1,dp1,p2,dp2 = y #unloading the system state variables
+    F2 = force(t) # assigning force
+    dp1_dt = -0.4*p1 - 0.4*dp1 + 0.2*p2 + 0.2*dp2 # assigning dp1 as eq1
+    dp2_dt = p1 + dp1 - p2 - dp2 + F2 # assigning dp2 as eq2
+    return [dp1,dp1_dt,dp2,dp2_dt] # returns derivatives of the system states
+
+y0 = [0,0,0,0]  # assigning the initial conditions 
+time_odeint = np.linspace(0,T,int(T/dt))  # Time from 0 to T, where iterations = T/dt.
+
+# Solving ODEs with odeint
+solution_odeint = odeint(system,y0,time_odeint)
+p2_odeint = solution_odeint[:,2]  # Extract dp2 = p2 from the array by extracting the third column of the array
+
+# Plot p2 from Euler, Heun, and odeint 
+# verifying that our solutions are valid using odeint, comparison of all numerical methods are plotted.
+# we expect the precision of odeint>heun>>euler, and we see this. Hence, this plot validates that our system calculates
+# euler and heuns method accurately, where odeint is more precise than heun and heun more precise than euler method.
+
+plt.figure(figsize=(12, 10))
+plt.plot(t_euler, p2_euler, label="p2 (Euler)", color="blue")
+plt.plot(t_heun, p2_heun, label="p2 (Heun)", color="red")
+plt.plot(time_odeint, p2_odeint, label="p2 (odeint)", color="green")
+plt.axhline(desired_steady_state_value, color='black', linestyle='-', label="Steady State (0)")
+plt.title("APPENDIX: System Response p2 vs. Time")
+plt.xlabel("Time (s)")
+plt.ylabel("Displacement of Response p2 (m)")
+plt.grid()
+plt.legend()
+plt.show()
+
+
+# Input force plot, helpful to understand the affect (dt) has on it, and ensure it is rectangular with chosen dt value.
+# if it not rectangular, then it will not input force as a impulse where force drops to 0 after 1s, hence skewing results.
+# "rectangular" simply refers to the force being represented as an impulse, rather than a gradual force.
+# By reducing the total simulation time (T) (i.e., 5s, 10s) we easily notice the affect a larger value of (dt) has on the
+# input force (F2), it produces a more gradual, triangular input; hence, not representing a true unit impulse.
+# This is why values of (dt)>0.1s were not tested, as they produce results where the unit impulse is not represented properly.
+
+plt.figure(figsize=(12, 6))
+plt.plot(t_euler, F2_euler, label="Input Force F2(t)", color="green")
+plt.title("APPENDIX: Input Force F2(t)")
+plt.xlabel("Time (seconds)")
+plt.ylabel("Force")
+plt.grid()
+plt.legend()
+
+# Error Plot for p2, helpful to understand where the response converges within the steady state region
+# this is significant to justifying our total simulation time (T)
+# the error plot allows us to evaluate a suitable run time (T), where we allow the system to fully converge to 0
+# while noticing that (|𝜖𝑡|%) > 1% around 50s. By close inspection, the peak of the graph around 52s produces errors such that
+# (|𝜖𝑡|%) < 1% Hence, we allow the system to converge slightly further (T = 80s), as there are no further values
+# in the response(s) where (|𝜖𝑡|%) > 1%. Hence, the steady state is reached for the system past ≈ 52s.
+# We can be certain the system has converged to 0 by increasing total simulation time (T) >80s.
+# However, this increases computational
+# expense, as more iterations have to be completed; hence, we leave (T = 80s) as the system has converged within 1% of Yss.
+# Note: by analysis of the error plot, we notice the relationship will exponentially decrease towards 0 for an underdamped
+# system. Hence, it is already obvious the steady state is reached past ≈ 52s for our specific total simulation time (T)
+# and timestep (dt). However, we can be certain by increasing (T) as mentioned.
+
+plt.figure(figsize=(12, 6))
+plt.plot(t_euler, percent_error_euler_p2, label="Euler % Error p2", color="blue",linestyle="--")
+plt.plot(t_heun, percent_error_heun_p2, label="Heun % Error p2", color="red")
+plt.axhline(y=1, color="green", linestyle=":", label="1% Error Threshold (Yss)")
+plt.title("APPENDIX: Percentage Error for p2 vs. Time")
+plt.xlabel("Time (s)")
+plt.ylabel("Percentage Error (%) Compared to Yss=0")
+plt.grid()
+plt.legend()
+plt.show()
+
+#REFRENCES
+#fiveable, 2024. 3.3 Logarithmic decrement and damping ratio. [Online] 
+#Available at: https://library.fiveable.me/vibrations-of-mechanical-systems/unit-3/logarithmic-decrement-damping-ratio/study-guide/gzT8ZTGAnc7n7lQz
+#[Accessed 2024 12 05].
+#TS, 2017. 2nd-order System Dynamics. [Online] 
+#Available at: https://controlsystemsacademy.com/0024/0024.html
+#[Accessed 10 12 2024].
